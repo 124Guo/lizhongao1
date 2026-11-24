@@ -1,0 +1,182 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>量子镜像</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050510; overflow: hidden; touch-action: none; font-family: sans-serif; }
+  canvas { display: block; }
+  #ui { position: absolute; top: 20px; left: 20px; right: 20px; display: flex; justify-content: space-between; color: #fff; font-size: 18px; font-weight: bold; pointer-events: none; z-index: 5; }
+  #overlay { position: absolute; inset: 0; background: rgba(5,5,16,0.95); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; z-index: 10; padding: 20px; text-align: center; }
+  #overlay.hide { display: none; }
+  h1 { color: #6ea8fe; margin-bottom: 10px; font-size: 28px; }
+  p { color: #8b93a1; margin-bottom: 25px; font-size: 14px; line-height: 1.6; }
+  .btn-group { display: flex; flex-direction: column; gap: 15px; width: 100%; max-width: 260px; }
+  
+  /* 上传按钮样式 */
+  .upload-label { padding: 12px; font-size: 15px; background: #fbbf24; color: #000; border-radius: 5px; font-weight: bold; cursor: pointer; display: block; text-align: center; }
+  .start-btn { padding: 15px; font-size: 18px; background: #6ea8fe; color: #000; border: none; font-weight: bold; cursor: pointer; border-radius: 5px; box-shadow: 0 4px 0 #2563eb; }
+  .start-btn:active { transform: translateY(4px); box-shadow: none; }
+  input[type="file"] { display: none; }
+  
+  /* 头像预览圈 */
+  #avatarPreview { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #6ea8fe; margin: 0 auto 15px; object-fit: cover; background: #1e293b; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div>蓝方: <span id="scoreB" style="color:#6ea8fe">0</span></div>
+  <div>红方: <span id="scoreR" style="color:#ef4444">0</span></div>
+</div>
+
+<div id="overlay">
+  <img id="avatarPreview" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23ccc'/><circle cx='50' cy='40' r='20' fill='%23f5d0b5'/><path d='M20,100 C20,70 80,70 80,100' fill='%239ca3af'/><rect x='30' y='30' width='40' height='20' rx='10' fill='none' stroke='%23333' stroke-width='3'/></svg>">
+  
+  <h1>量子镜像</h1>
+  <p>手指滑动，红蓝双生。<br>收集同色光球，避开白墙。</p>
+  
+  <div class="btn-group">
+    <label for="photoInput" class="upload-label">📷 点我选照片做主角</label>
+    <input type="file" id="photoInput" accept="image/*">
+    <button class="start-btn" onclick="startGame()">进入游戏</button>
+  </div>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
+
+// 默认头像（内置一个类似你照片的像素小人）
+let avatarImg = new Image();
+let hasAvatar = false;
+
+document.getElementById('photoInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = function(event) {
+      avatarImg.src = event.target.result;
+      hasAvatar = true;
+      document.getElementById('avatarPreview').src = event.target.result;
+      document.querySelector('.upload-label').innerText = "✅ 照片已锁定！";
+      document.querySelector('.upload-label').style.background = "#22c55e";
+    };
+    reader.readAsDataURL(file);
+  }
+});
+
+let isPlaying = false, reqAnimation;
+let blue, red, orbs, walls, scoreB, scoreR;
+let touch = { active: false, x: 0, y: 0 };
+
+function init() {
+  blue = { x: W/2, y: H/2, r: 15, drawR: 25 }; 
+  red  = { x: W/2, y: H/2, r: 15, drawR: 25 };
+  orbs = []; walls = []; scoreB = 0; scoreR = 0;
+  document.getElementById('scoreB').innerText = 0;
+  document.getElementById('scoreR').innerText = 0;
+  touch.x = W/2; touch.y = H/2;
+
+  for(let i=0; i<5; i++) {
+    let w = Math.random() * 100 + 50;
+    let h = Math.random() * 150 + 50;
+    let x = Math.random() * (W - w);
+    let y = Math.random() * (H - h);
+    if(x < W/2+80 && x+w > W/2-80 && y < H/2+80 && y+h > H/2-80) { i--; continue; }
+    walls.push({x, y, w, h});
+  }
+  for(let i=0; i<8; i++) {
+    let isBlue = Math.random() > 0.5;
+    orbs.push({ x: Math.random() * (W - 30) + 15, y: Math.random() * (H - 30) + 15, r: 10, type: isBlue ? 'blue' : 'red' });
+  }
+}
+
+window.addEventListener('touchstart', e => { if(isPlaying) { e.preventDefault(); touch.active = true; touch.x = e.touches[0].clientX; touch.y = e.touches[0].clientY; } }, {passive: false});
+window.addEventListener('touchmove', e => { if(isPlaying) { e.preventDefault(); touch.x = e.touches[0].clientX; touch.y = e.touches[0].clientY; } }, {passive: false});
+window.addEventListener('touchend', () => { touch.active = false; });
+window.addEventListener('mousemove', e => { if(isPlaying) { touch.active = true; touch.x = e.clientX; touch.y = e.clientY; } });
+
+function update() {
+  if(!isPlaying) return;
+  
+  if(touch.active) {
+    let moveX = (touch.x - blue.x) * 0.1;
+    let moveY = (touch.y - blue.y) * 0.1;
+    blue.x += moveX; blue.y += moveY;
+    red.x -= moveX; red.y -= moveY;
+  }
+
+  if(blue.x - blue.r < 0 || blue.x + blue.r > W || blue.y - blue.r < 0 || blue.y + blue.r > H ||
+     red.x - red.r < 0 || red.x + red.r > W || red.y - red.r < 0 || red.y + red.r > H) {
+    return gameOver("撞毁在边界");
+  }
+
+  for(let w of walls) {
+    if(blue.x + blue.r > w.x && blue.x - blue.r < w.x + w.w && blue.y + blue.r > w.y && blue.y - blue.r < w.y + w.h) return gameOver("蓝方撞墙");
+    if(red.x + red.r > w.x && red.x - red.r < w.x + w.w && red.y + red.r > w.y && red.y - red.r < w.y + w.h) return gameOver("红方撞墙");
+  }
+
+  for(let i = orbs.length - 1; i >= 0; i--) {
+    let o = orbs[i];
+    if(o.type === 'blue' && Math.hypot(blue.x - o.x, blue.y - o.y) < blue.r + o.r) {
+      orbs.splice(i, 1); scoreB++; document.getElementById('scoreB').innerText = scoreB; checkWin();
+    } else if(o.type === 'red' && Math.hypot(red.x - o.x, red.y - o.y) < red.r + o.r) {
+      orbs.splice(i, 1); scoreR++; document.getElementById('scoreR').innerText = scoreR; checkWin();
+    }
+  }
+  render();
+  reqAnimation = requestAnimationFrame(update);
+}
+
+function checkWin() { if(orbs.length === 0) gameOver("时空净化！", true); }
+
+function drawAvatar(x, y, radius, colorBorder, isRed) {
+  ctx.save(); ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip(); 
+  if (hasAvatar && avatarImg.complete) {
+    ctx.drawImage(avatarImg, x - radius, y - radius, radius*2, radius*2);
+    if(isRed) { ctx.fillStyle = 'rgba(239, 68, 68, 0.6)'; ctx.fillRect(x - radius, y - radius, radius*2, radius*2); }
+  } else {
+    // 如果没上传照片，默认画一个戴眼镜的小人
+    ctx.fillStyle = '#9ca3af'; ctx.fillRect(x - radius, y - radius, radius*2, radius*2);
+    ctx.fillStyle = '#f5d0b5'; ctx.beginPath(); ctx.arc(x, y-5, 10, 0, Math.PI*2); ctx.fill(); // 脸
+    ctx.fillStyle = '#333'; ctx.fillRect(x-10, y-10, 20, 5); // 眼镜
+    if(isRed) { ctx.fillStyle = 'rgba(239, 68, 68, 0.6)'; ctx.fillRect(x - radius, y - radius, radius*2, radius*2); }
+  }
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = colorBorder; ctx.lineWidth = 4; ctx.stroke();
+}
+
+function render() {
+  ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#1e293b'; for(let w of walls) ctx.fillRect(w.x, w.y, w.w, w.h);
+  for(let o of orbs) {
+    ctx.fillStyle = o.type === 'blue' ? '#6ea8fe' : '#ef4444';
+    ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; ctx.fill(); ctx.shadowBlur = 0;
+  }
+  drawAvatar(blue.x, blue.y, blue.drawR, '#6ea8fe', false);
+  drawAvatar(red.x, red.y, red.drawR, '#ef4444', true);
+}
+
+function startGame() {
+  document.getElementById('overlay').classList.add('hide');
+  init(); isPlaying = true; update();
+}
+
+function gameOver(reason, isWin = false) {
+  isPlaying = false; cancelAnimationFrame(reqAnimation);
+  const overlay = document.getElementById('overlay');
+  overlay.classList.remove('hide');
+  overlay.innerHTML = `<h1 style="color:${isWin ? '#22c55e' : '#ef4444'}">${isWin ? '胜利' : '失败'}</h1><p>${reason}<br>收集了 ${scoreB + scoreR} 个能量球。</p><button class="start-btn" onclick="location.reload()">重新开始</button>`;
+}
+</script>
+</body>
+</html>
